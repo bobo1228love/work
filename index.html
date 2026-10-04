@@ -578,7 +578,7 @@ function normalize(s){
 }
 function loadState(){
   try{
-    var raw=localStorage.getItem(LS_KEY);
+    var raw=localStorage.getItem(viewKey());
     if(raw){
       var s=JSON.parse(raw);
       if(s && Array.isArray(s.tasks)){ state=normalize(s); return; }
@@ -592,13 +592,13 @@ function scheduleFileWrite(){
   window.__wbWriteTimer=setTimeout(writeFileNow,400);
 }
 function saveState(){
-  try{ localStorage.setItem(LS_KEY, JSON.stringify(state)); }
+  try{ localStorage.setItem(viewKey(), JSON.stringify(state)); }
   catch(e){ toast('保存到浏览器失败：'+e.message); }
   scheduleFileWrite();
   if(cloud.enabled){ schedulePush(900); }
 }
 function saveLocal(){
-  try{ localStorage.setItem(LS_KEY, JSON.stringify(state)); }catch(e){}
+  try{ localStorage.setItem(viewKey(), JSON.stringify(state)); }catch(e){}
   scheduleFileWrite();
 }
 
@@ -710,7 +710,7 @@ function restoreTask(id){
 function removeTask(id){
   if(!confirm('确定删除这条任务？删除后不可恢复。')) return;
   var colId=taskColOf(id);
-  if(cloud.enabled && cloud.cols[colId]){
+  if(cloud.cols[colId]){
     var col=cloud.cols[colId];
     col.tasks=col.tasks.filter(function(t){ return t.id!==id; });
     col.tombstones['t:'+id]=Date.now();
@@ -723,8 +723,9 @@ function removeTask(id){
 }
 function clearDone(){
   if(!confirm('确定清空「已完成」里的全部任务？')) return;
-  if(cloud.enabled){
-    visibleCols().forEach(function(col){
+  var cols=visibleCols();
+  if(cols.length){
+    cols.forEach(function(col){
       col.tasks.filter(function(t){ return t.done; }).forEach(function(t){ col.tombstones['t:'+t.id]=Date.now(); });
       col.tasks=col.tasks.filter(function(t){ return !t.done; });
     });
@@ -1124,7 +1125,7 @@ function renderCatManager(){
       del.addEventListener('click',function(){
         if(!confirm('删除分类「'+c.name+'」？该分类下的任务会变为无分类，任务本身保留。')) return;
         var colId=catColOf(c.id);
-        if(cloud.enabled && cloud.cols[colId]){
+        if(cloud.cols[colId]){
           var col=cloud.cols[colId];
           col.tasks.forEach(function(t){ if(t.categoryId===c.id) t.categoryId=null; });
           col.categories=col.categories.filter(function(x){ return x.id!==c.id; });
@@ -1567,6 +1568,19 @@ function cacheKeyFor(){
   var c=cloud.cfg;
   return (c?c.owner:'')+'/'+(c?c.repo:'')+'/'+cloud.role+'/'+(c&&c.mid?c.mid:'');
 }
+function viewKey(){
+  if(cloud.cfg){ return 'workbench.view.'+cacheKeyFor(); }
+  return LS_KEY;
+}
+function readLocalKey(){
+  try{
+    var raw=localStorage.getItem(LS_KEY);
+    if(!raw) return null;
+    var s=JSON.parse(raw);
+    if(s && Array.isArray(s.tasks)) return normalize(s);
+  }catch(e){}
+  return null;
+}
 function saveColCache(){
   try{
     var data={key:cacheKeyFor(), cols:{}};
@@ -1598,10 +1612,10 @@ function loadColCache(){
   }catch(e){ return false; }
 }
 function saveViewCache(){
-  try{ localStorage.setItem(LS_KEY, JSON.stringify(state)); }catch(e){}
+  try{ localStorage.setItem(viewKey(), JSON.stringify(state)); }catch(e){}
 }
 function visibleCols(){
-  if(!cloud.enabled) return [];
+  if(!cloud.cfg) return [];
   if(cloud.role==='member') return cloud.cols['me']?[cloud.cols['me']]:[];
   if(ui.scope==='own') return cloud.cols['own']?[cloud.cols['own']]:[];
   if(ui.scope==='all') return cloud.order.filter(function(id){ return id!=='roster'; }).map(function(id){ return cloud.cols[id]; }).filter(function(c){ return !!c; });
@@ -1615,7 +1629,8 @@ function newTaskCol(){
 function taskColOf(id){ return taskOwner[id] || newTaskCol(); }
 function catColOf(id){ return catOwner[id] || newTaskCol(); }
 function rebuildView(){
-  if(!cloud.enabled) return;
+  if(!cloud.cfg) return;
+  if(cloud.order.length===0) return;
   var tasks=[], cats=[], tmap={}, cmap={}, seen={};
   visibleCols().forEach(function(col){
     col.tasks.forEach(function(t){ tasks.push(t); tmap[t.id]=col.id; });
@@ -1636,20 +1651,19 @@ function adoptViewIntoCols(){
   state.tasks.forEach(function(t){
     var home=t._col;
     if(home && !cloud.cols[home]) return;
-    home=home||(cloud.role==='member'?'me':'own');
+    home=home||'own';
     var c=cloud.cols[home];
     if(c && !colTasks[c.id][t.id]){ c.tasks.push(t); colTasks[c.id][t.id]=1; }
   });
   state.categories.forEach(function(x){
     var home=x._col;
     if(home && !cloud.cols[home]) return;
-    home=home||(cloud.role==='member'?'me':'own');
+    home=home||'own';
     var c=cloud.cols[home];
     if(c && !colCats[c.id][x.id]){ c.categories.push(x); colCats[c.id][x.id]=1; }
   });
 }
 function touchCol(colId){
-  if(!cloud.enabled) return;
   var c=cloud.cols[colId];
   if(!c) return;
   c.dirty=true;
@@ -1657,8 +1671,8 @@ function touchCol(colId){
   schedulePush(800);
 }
 function addTaskTo(colId, task){
-  if(cloud.enabled){
-    var c=cloud.cols[colId]||cloud.cols[newTaskCol()];
+  var c=cloud.cols[colId]||cloud.cols[newTaskCol()];
+  if(c){
     task._col=c.id;
     c.tasks.push(task);
   }else{
@@ -1666,8 +1680,8 @@ function addTaskTo(colId, task){
   }
 }
 function addCatTo(colId, cat){
-  if(cloud.enabled){
-    var c=cloud.cols[colId]||cloud.cols[newTaskCol()];
+  var c=cloud.cols[colId]||cloud.cols[newTaskCol()];
+  if(c){
     cat._col=c.id;
     c.categories.push(cat);
   }else{
@@ -1746,8 +1760,13 @@ async function unlockOwner(password, remember){
     var cacheHit=loadColCache();
     if(!cacheHit && !file){
       var oc=cloud.cols['own'];
-      oc.tasks=state.tasks;
-      oc.categories=state.categories;
+      var src=state;
+      if(!src.tasks.length && !src.categories.length){
+        var ls=readLocalKey();
+        if(ls && (ls.tasks.length || ls.categories.length)) src=ls;
+      }
+      oc.tasks=src.tasks;
+      oc.categories=src.categories;
     }
     cloud.enabled=true;
     adoptViewIntoCols();
@@ -1779,7 +1798,6 @@ async function unlockMember(){
     addCol('me', cloud.cfg.path||('wb-m-'+(cloud.cfg.mid||'x')+'.json'), 'raw', key, cloud.cfg.name||'成员');
     loadColCache();
     cloud.enabled=true;
-    adoptViewIntoCols();
     hideLock();
     rebuildView();
     saveViewCache();
@@ -2112,7 +2130,7 @@ function importFile(file){
       if(!data || !Array.isArray(data.tasks)){ toast('文件格式不对：缺少任务数据'); return; }
       if(!confirm('导入将覆盖当前全部数据（任务、分类、设置）。确定继续？')) return;
       var nd=normalize(data);
-      if(cloud.enabled){
+      if(cloud.cfg && cloud.cols[newTaskCol()]){
         var colId=newTaskCol();
         var col=cloud.cols[colId];
         if(col){
@@ -2207,7 +2225,7 @@ function bindEvents(){
     renderSettingsForm();
   });
   qs('#btnClearAll').addEventListener('click',function(){
-    if(cloud.enabled){
+    if(cloud.cfg && cloud.order.length){
       var all = cloud.role==='owner' && ui.scope==='all';
       if(!confirm(all?'确定清空所有成员的全部任务和分类？此操作无法恢复，建议先点「📤 导出」备份。':'确定清空当前范围的全部任务和分类？此操作无法恢复。')) return;
       var cols = all ? cloud.order.filter(function(id){ return id!=='roster'; }).map(function(id){ return cloud.cols[id]; }) : (cloud.cols[newTaskCol()]?[cloud.cols[newTaskCol()]]:[]);
@@ -2360,14 +2378,14 @@ window.__wb = {
 
 /* ================= 启动 ================= */
 function init(){
+  cloud.cfg=loadCloudConfig();
+  if(cloud.cfg) cloud.role=cloud.cfg.role||'owner';
   loadState();
   bindEvents();
   render();
   qs('#btnTheme').textContent=THEME_ICON[state.settings.theme]||'🌓';
   setInterval(checkReminders,60*1000);
   setTimeout(checkReminders,1500);
-  cloud.cfg=loadCloudConfig();
-  if(cloud.cfg) cloud.role=cloud.cfg.role||'owner';
   renderCloudUI();
   if(cloud.cfg){
     var savedPw=null;
