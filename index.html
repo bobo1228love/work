@@ -523,7 +523,7 @@ var state = null;
 var fileHandle = null;
 var editingId = null;
 var ui = { tab:'todo', filter:'all', cat:'', sort:'smart', q:'', scope:'all' };
-var cloud = { cfg:null, role:'owner', enabled:false, pushing:false, password:null, roster:{members:[]}, rosterSha:null, cols:{}, order:[], pollTimer:null, pushTimer:null, lastErr:'' };
+var cloud = { cfg:null, role:'owner', enabled:false, pushing:false, password:null, roster:{members:[]}, rosterSha:null, cols:{}, order:[], pollTimer:null, pushTimer:null, lastErr:'', errCount:0, backoffUntil:0 };
 
 function defaultState(){
   return { version:1, tasks:[], categories:[], settings:{ theme:'system', notify:false, advance:'0' } };
@@ -1846,28 +1846,38 @@ function syncError(statusKind, err){
   var friendly=friendlySyncError(err, msg);
   cloud.lastErr=friendly;
   if(console && console.error) console.error('[云同步]', friendly, err);
+  cloud.errCount++;
+  var delay=Math.min(10000*Math.pow(2, cloud.errCount-1), 60000);
+  cloud.backoffUntil=Date.now()+delay;
   if(!navigator.onLine){ setSyncStatus('offline','网络不可用，改动会在联网后自动同步'); }
   else{ setSyncStatus(statusKind, friendly); }
 }
 async function pushCycle(){
   if(!cloud.enabled) return;
   if(cloud.pushing){ schedulePush(400); return; }
+  if(Date.now()<cloud.backoffUntil){ schedulePush(cloud.backoffUntil-Date.now()+800); return; }
   cloud.pushing=true;
-  var anyChange=false;
+  var anyChange=false, conflictLeft=false;
   try{
     for(var i=0;i<cloud.order.length;i++){
       var col=cloud.cols[cloud.order[i]];
+      var colConflict=true;
       for(var attempt=0; attempt<3; attempt++){
         var r;
         try{ r=await syncCol(col); }
         catch(e){ if(e.status===409 || e.status===422){ continue; } throw e; }
         if(r==='conflict'){ continue; }
+        colConflict=false;
         if(r) anyChange=true;
         break;
       }
+      if(colConflict) conflictLeft=true;
     }
     if(anyChange){ rebuildView(); saveViewCache(); saveColCache(); render(); }
     setSyncStatus('ok');
+    cloud.errCount=0;
+    cloud.backoffUntil=0;
+    if(conflictLeft) schedulePush(1500);
   }catch(err){
     syncError('error', err);
   }
@@ -1880,6 +1890,7 @@ function schedulePush(ms){
 }
 async function pollOnce(){
   if(!cloud.enabled || cloud.pushing) return;
+  if(Date.now()<cloud.backoffUntil) return;
   cloud.pushing=true;
   try{
     var changed=false;
@@ -1898,6 +1909,8 @@ async function pollOnce(){
     }
     if(changed){ rebuildView(); saveViewCache(); saveColCache(); render(); }
     setSyncStatus('ok');
+    cloud.errCount=0;
+    cloud.backoffUntil=0;
   }catch(err){
     syncError('error', err);
   }
@@ -1905,7 +1918,7 @@ async function pollOnce(){
 }
 function startPolling(){
   stopPolling();
-  cloud.pollTimer=setInterval(pollOnce, cloud.role==='member'?5000:15000);
+  cloud.pollTimer=setInterval(pollOnce, cloud.role==='member'?3000:8000);
 }
 function stopPolling(){
   if(cloud.pollTimer){ clearInterval(cloud.pollTimer); cloud.pollTimer=null; }
