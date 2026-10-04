@@ -424,6 +424,12 @@ hr{border:none;border-top:1px solid var(--border);margin:14px 0}
       </div>
       <ul class="cat-list" id="memberList"></ul>
       <p class="hint">每个成员有一个专属链接：发给他后，他打开只能看到自己的任务，成员之间互不可见。删除成员后其链接立即失效。你可以在左侧栏切换查看每个成员的内容。</p>
+      <hr>
+      <div class="set-row">
+        <span>🧹 清理重复任务</span>
+        <button class="btn small" id="btnDedupe">去重</button>
+      </div>
+      <p class="hint">旧版本曾把同一条任务复制到多个成员名下，导致「全部」里重复显示。点「去重」会保留每个任务在各集合中的一条，其余删除。</p>
     </div>
     <hr>
     <div class="set-row">
@@ -1995,6 +2001,33 @@ function removeMember(mid){
     toast(ok?'已删除成员':'删除失败（网络），请重试');
   }).catch(function(e){ toast('删除失败：'+(e.message||e)); });
 }
+function dedupeTasks(){
+  if(!cloud.enabled || cloud.role!=='owner'){ toast('仅所有者可用'); return; }
+  var seen={}, removed=0;
+  cloud.order.forEach(function(id){
+    var col=cloud.cols[id];
+    if(!col) return;
+    var out=[], inCol={};
+    for(var i=0;i<col.tasks.length;i++){
+      var t=col.tasks[i];
+      if(seen[t.id] || inCol[t.id]){
+        col.tombstones['t:'+t.id]=Date.now();
+        removed++;
+      }else{
+        seen[t.id]=1;
+        inCol[t.id]=1;
+        out.push(t);
+      }
+    }
+    col.tasks=out;
+  });
+  if(removed===0){ toast('没有发现重复任务'); return; }
+  rebuildView();
+  saveColCache();
+  saveState();
+  render();
+  toast('已清理 '+removed+' 条重复任务，正在同步');
+}
 function memberLink(m){
   var cfg=cloud.cfg;
   var data={v:2, owner:cfg.owner, repo:cfg.repo, branch:cfg.branch||'', token:cfg.token, role:'member', mid:m.id, name:m.name, key:m.key, path:m.path};
@@ -2311,6 +2344,7 @@ function bindEvents(){
   qs('#newMemberName').addEventListener('keydown',function(e){
     if(e.key==='Enter'){ e.preventDefault(); qs('#btnAddMember').click(); }
   });
+  qs('#btnDedupe').addEventListener('click',dedupeTasks);
 
   qs('#btnSync').addEventListener('click',connectFile);
   qs('#btnReconnect').addEventListener('click',connectFile);
