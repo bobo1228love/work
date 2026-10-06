@@ -1651,22 +1651,30 @@ function adoptViewIntoCols(){
   cloud.order.forEach(function(id){
     var c=cloud.cols[id];
     colTasks[id]={}; colCats[id]={};
-    c.tasks.forEach(function(t){ colTasks[id][t.id]=1; });
-    c.categories.forEach(function(x){ colCats[id][x.id]=1; });
+    c.tasks.forEach(function(t){ colTasks[id][t.id]=t; });
+    c.categories.forEach(function(x){ colCats[id][x.id]=x; });
   });
   state.tasks.forEach(function(t){
     var home=t._col;
     if(home && !cloud.cols[home]) return;
     home=home||'own';
     var c=cloud.cols[home];
-    if(c && !colTasks[c.id][t.id]){ c.tasks.push(t); colTasks[c.id][t.id]=1; }
+    if(!c) return;
+    if(c.tombstones && c.tombstones['t:'+t.id]) return;
+    var ex=colTasks[c.id][t.id];
+    if(!ex){ c.tasks.push(t); colTasks[c.id][t.id]=t; }
+    else if((t.updatedAt||0)>(ex.updatedAt||0)){ c.tasks[c.tasks.indexOf(ex)]=t; colTasks[c.id][t.id]=t; }
   });
   state.categories.forEach(function(x){
     var home=x._col;
     if(home && !cloud.cols[home]) return;
     home=home||'own';
     var c=cloud.cols[home];
-    if(c && !colCats[c.id][x.id]){ c.categories.push(x); colCats[c.id][x.id]=1; }
+    if(!c) return;
+    if(c.tombstones && c.tombstones['c:'+x.id]) return;
+    var ex=colCats[c.id][x.id];
+    if(!ex){ c.categories.push(x); colCats[c.id][x.id]=x; }
+    else if((x.updatedAt||0)>(ex.updatedAt||0)){ c.categories[c.categories.indexOf(ex)]=x; colCats[c.id][x.id]=x; }
   });
 }
 function touchCol(colId){
